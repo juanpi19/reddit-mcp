@@ -1,6 +1,6 @@
 # Reddit MCP Server
 
-A Model Context Protocol (MCP) server that provides tools for interacting with Reddit's API through Claude Desktop. This server enables Claude to search subreddits, retrieve posts, analyze comments, and generate comprehensive Reddit content summaries.
+A Model Context Protocol (MCP) server that provides tools for interacting with Reddit's API. This server enables you to search subreddits, retrieve posts, analyze comments, and generate comprehensive Reddit content summaries.
 
 ## Prerequisites
 
