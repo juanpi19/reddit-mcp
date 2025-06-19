@@ -1,115 +1,75 @@
 from mcp.server.fastmcp import FastMCP
-import asyncpraw
-from dotenv import load_dotenv
-import os
-import asyncio
-import aiohttp
-from redditwarp.ASYNC import Client
+from redditwarp.SYNC import Client
 
-load_dotenv()
-
-# Create an MCP server
 mcp = FastMCP("reddit-mcp")
+client = Client()
 
+def _build_post(post):
+  return {
+          'post_id': getattr(post, 'id', None),
+          'post_author': getattr(post, 'author_display_name', None),
+          'post_title': getattr(post, 'title', None),
+          'post_body': getattr(post, 'body', None),
+          'post_comment_count': getattr(post, 'comment_count', None)   
+          }
 
+def _build_comment(comment):
+  return getattr(comment.value, 'body', None)
 
 @mcp.tool()
-async def get_relevant_subreddits(topic: str, limit: int = 10) -> list[dict]:
-    """This tool retrieves a list of relevant subreddits related to a given topic.
+def get_subreddit_list_info(subreddit_topic: str) -> dict:
+    """This function retrieves information about a given subreddit.
 
-    The 'topic' is a string that describes the topic of the subreddits to be retrieved.
-    The 'limit' is an integer that specifies the maximum number of subreddits to retrieve.
-    
     Args:
-        topic (str): The topic to search for subreddits.
-        limit (int): The maximum number of subreddits to retrieve.
+        subreddit_topic (str): The name of the subreddit to retrieve information about."""
 
-    Returns:
-        list[dict]: A list of dictionaries containing subreddit names and descriptions.
-    """
     try:
-        # Create Reddit instance
-        reddit = Client()
-
-        # Use Reddit's search API to get subreddits related to the topic
-        subreddits = await reddit.subreddits.search(topic, limit=limit)
-        
-        # Create a list to store subreddit names
-        subreddit_list = []
-
-        # Collect relevant subreddits
-        async for subreddit in subreddits:
-            subreddit_list.append(
-                {
-                    "subreddit": subreddit.display_name, 
-                    "description": subreddit.public_description
-                }
-            )
-        
-        return subreddit_list
+        sub = client.p.subreddit.fetch_by_name(subreddit_topic)
+        return {
+            "subreddit_name": getattr(sub, 'name', None),
+            "subreddit_description": getattr(sub, 'public_description', None),
+            "subreddit_subscriber_count": getattr(sub, 'subscriber_count', None),
+            "subreddit_active_users": sub.b.active_user_count
+        }
     except Exception as e:
         print(f"An error occurred: {e}")
         return []
 
-    
 @mcp.tool()
-async def get_relevant_threads(subreddit_name: str, limit: int = 5, sort_by: str = 'hot') -> list[dict]:
-    """This tool retrieves relevant threads (posts) from a given subreddit.
-    You can specify the sorting method (hot, new, top) and the number of posts to retrieve.
+def get_relevant_threads(subreddit_name: str, limit: int = 5) -> dict[str, list[dict]]:
+    """This tool retrieves relevant threads (posts) from a given subreddit across multiple categories (hot, new, top, controversial).
+    It fetches a set number of posts for each category and returns a dictionary of posts organized by category.
 
     Args:
         subreddit_name (str): The name of the subreddit to retrieve threads from.
-        limit (int): The maximum number of posts to retrieve.
-        sort_by (str): The sorting method to use 
-                       Options: 'hot', 'new', 'top'.
+        limit (int): The maximum number of posts to retrieve for each category (default is 5).
 
     Returns:
-        list[dict]: A list of dictionaries containing thread titles, URLs, scores, comments, authors, creation times, and subreddit names.
+        dict: A dictionary where the keys are category names ('hot', 'new', 'top', 'controversial') and 
+              the values are lists of dictionaries containing details of the posts, such as titles, URLs, scores, comments, authors, creation times, and subreddit names.
     """
     try:
-        # Create Reddit instance
-        reddit = Client()
+        categories = ['hot', 'new', 'top', 'controversial']
+        fetch_methods = {
+            'hot': client.p.subreddit.pull.hot,
+            'new': client.p.subreddit.pull.new,
+            'top': client.p.subreddit.pull.top,
+            'controversial': client.p.subreddit.pull.controversial
+        }
 
-        # Get the subreddit object
-        subreddit = await reddit.subreddit(subreddit_name)
-        
-        # Fetch posts based on the sorting method
-        if sort_by == 'hot':
-            posts = await subreddit.hot(limit=limit)
-        elif sort_by == 'new':
-            posts = await subreddit.new(limit=limit)
-        elif sort_by == 'top':
-            posts = await subreddit.top(limit=limit)
-        else:
-            return f"Invalid sort method: {sort_by}. Choose from 'hot', 'new', or 'top'."
-        
-        # Create a list to store thread details
-        thread_list = []
-        
-        # Collect relevant threads asynchronously
-        async for post in posts:
-            thread_list.append({
-                'post_id': post.id,
-                'title': post.title,
-                'url': post.url,
-                'score': post.score,
-                'comments': post.num_comments,
-                'author': post.author.name if post.author else 'deleted',
-                'created_utc': post.created_utc,
-                'subreddit': post.subreddit.display_name,
-                'body': post.selftext
-            })
-        
-        return thread_list
-    
+        posts_dict = {}
+        for category in categories:
+            posts = fetch_methods[category](subreddit_name, limit)
+            posts_dict[category] = [_build_post(post) for post in posts]
+
+        return posts_dict
+
     except Exception as e:
-        # Log more detailed error information for debugging
         print(f"Error occurred: {e}")
-        return f"An error occurred: {e}"
-
+        return {}
 
 @mcp.tool()
-async def get_comments_from_post(post_id: str, limit: int = 10) -> list[dict]:
+def get_posts_comments(post_ids: list[int], limit: int =10) -> dict[str, list[str]]:
     """This tool retrieves comments from a given Reddit post using the post's ID.
 
     Args:
@@ -119,71 +79,52 @@ async def get_comments_from_post(post_id: str, limit: int = 10) -> list[dict]:
     Returns:
         list[dict]: A list of dictionaries containing comment author, score, body, and ID.
     """
-    try:
-        # Create Reddit instance
-        reddit = Client()
-
-        # Get the post object
-        post = await reddit.submission(id=post_id)
-
-        # Fetch the comments for the post
-        post_comments = await post.comments()
-
-        # Make sure the comments are fully populated (i.e., load more if necessary)
-        await post.comments.replace_more(limit=None)
-
-        # Limit the number of comments to return
-        comments_list = []
-        for comment in post_comments[:limit]:
-            comments_list.append({
-                'author': comment.author.name if comment.author else 'Unknown',
-                'score': comment.score,
-                'body': comment.body,
-                'id': comment.id
-            })
-
-        return comments_list
+    comments_dict = {}
     
-    except Exception as e:
-        print(f"Error occurred: {e}")
-        return f"An error occurred: {e}"
+    for post_id in post_ids:
+        comments = []
+        tree_node = client.p.comment_tree.fetch(post_id, sort='top', limit=limit)
+        
+        for node in tree_node.children:
+            comment = _build_comment(node)
+            if comment:
+                comments.append(comment)
+        
+        comments_dict[post_id] = comments
+    
+    return comments_dict
 
 
 @mcp.prompt()
-async def get_reddit_post_summary(topic: str, num_subreddits: int = 10, num: int = 5) -> str:
+async def get_reddit_post_summary(topic: str, limit: int = 10) -> str:
     """Generate a prompt for Claude to find and discuss posts on reddit about a specific topic."""
     
-    return f"""Search for relevant discussions about '{topic}' on Reddit using the get_relevant_subreddits and get_relevant_threads tools.
-
-    Follow these instructions:
+    return f"""Search the web to find relevant subreddits about '{topic}' and compile 3 subreddits. Once you have the subreddits, follow these instructions:
     
-    1. First, use the `get_relevant_subreddits` tool to find `{num_subreddits}` subreddits related to the topic '{topic}'.
-       - Choose the subreddits that are most relevant to the topic and the users are most likely to be interested in. Use the `description` to help you make this decision.
+    1. First, use the `get_relevant_threads` for each subreddit tool to find relevant posts'.
+       
+    2. For each post you obtained from step 1, keep top `{limit}` posts:
+       - Top posts are the ones with the highest score (upvotes) and the most comments (engagement).
 
-    2. For each subreddit you keep from step 1, invoke the tool `get_relevant_threads` to fetch the top `{num}` posts:
-       - Top posts are the posts with the highest score (upvotes) and the most comments (engagement).
-
-    3. For each post, invoke the tool `get_comments_from_post` to fetch the top `{num}` comments
+    3. For each post, invoke the tool `get_posts_comments` to fetch the top `{limit}` comments.
 
     4. After collecting posts and comments, analyze the data:
          - Common themes across posts and comments related to '{topic}'
-         - Sentiment trends (positive, negative, or neutral)
          - Most discussed subtopics or areas of focus (e.g., trends, needs, pain points)
          - Keywords or phrases that emerge frequently across posts and comments
 
-    5. **Provide a Comprehensive Summary**:
-       - **Overview**: Provide a high-level summary of the main discussions about '{topic}'.
-       - **Key Insights**: Highlight actionable insights such as:
+    5. Provide a high-level summary of the main discussions about '{topic}'.
+       - Highlight insights such as:
          - What people are excited about or frustrated with
-         - Any common product or service needs mentioned
          - Popular subtopics, opinions, or customer pain points
-       - **Relevance to Advertising**: Suggest how these insights could guide potential advertising content or campaigns. For example, which areas might be worth targeting in ads, which media formats are popular, and how sentiment can guide messaging.
-
     """
 
 # Run the MCP server
 if __name__ == "__main__":
     mcp.run(transport='stdio')
+
+
+
 
 
 
