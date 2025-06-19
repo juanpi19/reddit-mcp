@@ -4,28 +4,14 @@ from dotenv import load_dotenv
 import os
 import asyncio
 import aiohttp
+from redditwarp.ASYNC import Client
 
 load_dotenv()
 
 # Create an MCP server
 mcp = FastMCP("reddit-mcp")
 
-# Set up Async Reddit API client using asyncpraw
-async def create_reddit():
-    loop = asyncio.get_event_loop()
-    asyncio.set_event_loop(loop)  # Ensure the event loop is set
 
-    # Create an aiohttp TCP connector using the event loop
-    connector = aiohttp.TCPConnector(limit_per_host=10, loop=loop)
-    
-    reddit = asyncpraw.Reddit(
-        client_id=os.getenv("REDDIT_CLIENT_ID"),
-        client_secret=os.getenv("REDDIT_CLIENT_SECRET"),
-        user_agent='mcp-reddit-tool/0.1',
-        connector=connector
-    )
-    
-    return reddit
 
 @mcp.tool()
 async def get_relevant_subreddits(topic: str, limit: int = 10) -> list[dict]:
@@ -43,29 +29,28 @@ async def get_relevant_subreddits(topic: str, limit: int = 10) -> list[dict]:
     """
     try:
         # Create Reddit instance
-        reddit = await create_reddit()
+        reddit = Client()
 
         # Use Reddit's search API to get subreddits related to the topic
-        subreddits = reddit.subreddits.search(topic, limit=limit)
+        subreddits = await reddit.subreddits.search(topic, limit=limit)
         
         # Create a list to store subreddit names
         subreddit_list = []
-        
+
         # Collect relevant subreddits
         async for subreddit in subreddits:
             subreddit_list.append(
                 {
                     "subreddit": subreddit.display_name, 
                     "description": subreddit.public_description
-                 }
-                )
+                }
+            )
         
         return subreddit_list
-    
     except Exception as e:
-        # Log more detailed error information for debugging
-        print(f"Error occurred: {e}")
-        return f"An error occurred: {e}"
+        print(f"An error occurred: {e}")
+        return []
+
     
 @mcp.tool()
 async def get_relevant_threads(subreddit_name: str, limit: int = 5, sort_by: str = 'hot') -> list[dict]:
@@ -83,22 +68,22 @@ async def get_relevant_threads(subreddit_name: str, limit: int = 5, sort_by: str
     """
     try:
         # Create Reddit instance
-        reddit = await create_reddit()
+        reddit = Client()
 
         # Get the subreddit object
         subreddit = await reddit.subreddit(subreddit_name)
         
         # Fetch posts based on the sorting method
         if sort_by == 'hot':
-            posts = subreddit.hot(limit=limit)
+            posts = await subreddit.hot(limit=limit)
         elif sort_by == 'new':
-            posts = subreddit.new(limit=limit)
+            posts = await subreddit.new(limit=limit)
         elif sort_by == 'top':
-            posts = subreddit.top(limit=limit)
+            posts = await subreddit.top(limit=limit)
         else:
             return f"Invalid sort method: {sort_by}. Choose from 'hot', 'new', or 'top'."
         
-        # Create a list to store thread titles and URLs
+        # Create a list to store thread details
         thread_list = []
         
         # Collect relevant threads asynchronously
@@ -109,7 +94,7 @@ async def get_relevant_threads(subreddit_name: str, limit: int = 5, sort_by: str
                 'url': post.url,
                 'score': post.score,
                 'comments': post.num_comments,
-                'author': post.author,
+                'author': post.author.name if post.author else 'deleted',
                 'created_utc': post.created_utc,
                 'subreddit': post.subreddit.display_name,
                 'body': post.selftext
@@ -121,7 +106,7 @@ async def get_relevant_threads(subreddit_name: str, limit: int = 5, sort_by: str
         # Log more detailed error information for debugging
         print(f"Error occurred: {e}")
         return f"An error occurred: {e}"
-    
+
 
 @mcp.tool()
 async def get_comments_from_post(post_id: str, limit: int = 10) -> list[dict]:
@@ -136,11 +121,13 @@ async def get_comments_from_post(post_id: str, limit: int = 10) -> list[dict]:
     """
     try:
         # Create Reddit instance
-        reddit = await create_reddit()
+        reddit = Client()
+
+        # Get the post object
         post = await reddit.submission(id=post_id)
 
-        # Fetch the comments for the post (the .comments attribute returns a PRAW object for comments)
-        post_comments = post.comments
+        # Fetch the comments for the post
+        post_comments = await post.comments()
 
         # Make sure the comments are fully populated (i.e., load more if necessary)
         await post.comments.replace_more(limit=None)
@@ -161,9 +148,10 @@ async def get_comments_from_post(post_id: str, limit: int = 10) -> list[dict]:
         print(f"Error occurred: {e}")
         return f"An error occurred: {e}"
 
+
 @mcp.prompt()
 async def get_reddit_post_summary(topic: str, num_subreddits: int = 10, num: int = 5) -> str:
-    """Generate a prompt for Claude to find and discuss academic papers on a specific topic."""
+    """Generate a prompt for Claude to find and discuss posts on reddit about a specific topic."""
     
     return f"""Search for relevant discussions about '{topic}' on Reddit using the get_relevant_subreddits and get_relevant_threads tools.
 
