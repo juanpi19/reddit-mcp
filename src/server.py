@@ -119,10 +119,7 @@ async def get_reddit_post_summary(topic: str, limit: int = 10) -> str:
          - Popular subtopics, opinions, or customer pain points
     """
 
-def main():
-    """Main entry point for the MCP server."""
-    mcp.run(transport='stdio')
 
 # Run the MCP server
 if __name__ == "__main__":
-    main()
+    mcp.run(transport='stdio')
